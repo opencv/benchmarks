@@ -13,6 +13,7 @@ import cv2 as cv
 if sys.version_info[0] < 3 or sys.version_info[1] < 5:
     raise Exception("Python 3.5 or greater is required. Try running `python3 download_collection.py`")
 
+# global params
 verbose = False
 
 class ModelData:
@@ -122,6 +123,7 @@ Kd 1.000000 1.000000 1.000000
         tmp_mtl_path.rename(mtl_path)
         print("Material written")
     return mesh_path, texture_path
+
 
 def get_thumb(model : ModelData, dir):
     if verbose:
@@ -257,78 +259,77 @@ def get_stanford_model(url : str, name : str, ext: str, dir : str, chunk_size : 
 
 
 # ==================================================
+if __name__ == "__main__":
+    verbose = False
 
-dirname = "dlmodels"
+    dirname = "dlmodels"
 
-all_models = []
+    all_models = []
 
-print("Getting Google Research models")
+    print("Getting Google Research models")
 
-content_file = Path(dirname) / Path("content.json")
-if content_file.exists():
-    with open(content_file, "r") as openfile:
-        models_json = json.load(openfile)
-else:
-    Path(dirname).mkdir(parents=True, exist_ok=True)
-    models_json = get_content(content_file)
-
-models = []
-for model in models_json:
-    model_name = model['name']
-    desc  = model['description']
-    fsize = model['filesize']
-    thumb_url  = model['thumbnail_url']
-    if 'categories' in model:
-        categories = model['categories']
+    content_file = Path(dirname) / Path("content.json")
+    if content_file.exists():
+        with open(content_file, "r") as openfile:
+            models_json = json.load(openfile)
     else:
-        categories = [ ]
-    models.append(ModelData(model_name, desc, fsize, thumb_url, categories))
+        Path(dirname).mkdir(parents=True, exist_ok=True)
+        models_json = get_content(content_file)
 
-print("Getting thumbnail images")
-for model in models:
-    get_thumb(model, dirname)
+    models = []
+    for model in models_json:
+        model_name = model['name']
+        desc  = model['description']
+        fsize = model['filesize']
+        thumb_url  = model['thumbnail_url']
+        if 'categories' in model:
+            categories = model['categories']
+        else:
+            categories = [ ]
+        models.append(ModelData(model_name, desc, fsize, thumb_url, categories))
 
-print("Downloading models from the {}/{} collection.".format(owner_name, collection_name))
+    print("Getting thumbnail images")
+    for model in models:
+        get_thumb(model, dirname)
 
-for model in models:
-    model_dir = Path(dirname) / Path(model.name)
-    Path(model_dir).mkdir(parents=True, exist_ok=True)
-    model_path, texture_path = download_model(model.name, model_dir)
-    all_models.append((model_path, texture_path))
+    print("Downloading models from the {}/{} collection.".format(owner_name, collection_name))
 
-print('Done.')
+    for model in models:
+        model_dir = Path(dirname) / Path(model.name)
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
+        model_path, texture_path = download_model(model.name, model_dir)
+        all_models.append((model_path, texture_path))
 
-categories = set()
-for model in models:
-    for cat in model.categories:
-        categories.add(cat)
-print("Categories:", categories)
-#{'Consumer Goods', 'Bag', 'Car Seat',
-# 'Keyboard', 'Media Cases', 'Toys',
-# 'Action Figures', 'Bottles and Cans and Cups',
-# 'Shoe', 'Legos', 'Hat',
-# 'Mouse', 'Headphones', 'Stuffed Toys',
-# 'Board Games', 'Camera'}
+    print('Done.')
 
-print("\nGetting Stanford models")
+    categories = set()
+    for model in models:
+        for cat in model.categories:
+            categories.add(cat)
+    print("Categories:", categories)
+    # 'Consumer Goods', 'Bag', 'Car Seat', 'Keyboard', 'Media Cases', 'Toys',
+    # 'Action Figures', 'Bottles and Cans and Cups', 'Shoe', 'Legos', 'Hat',
+    # 'Mouse', 'Headphones', 'Stuffed Toys', 'Board Games', 'Camera'
 
-for m in stanford_models:
-    url, chunk_size, internal_path = m
+    print("\nGetting Stanford models")
 
-    s = url.split("/")[-1].split(".")
-    name = "stanford_"+s[0]
-    ext = s[1]+"."+s[2]
+    for m in stanford_models:
+        url, chunk_size, internal_path = m
 
-    if verbose:
-        print(name + ":")
-    model_dir = Path(dirname) / Path(name)
-    Path(model_dir).mkdir(parents=True, exist_ok=True)
-    model_path, texture_path = get_stanford_model(url, name, ext, model_dir, chunk_size, internal_path)
-    all_models.append((model_path, texture_path))
+        s = url.split("/")[-1].split(".")
+        name = "stanford_"+s[0]
+        ext = s[1]+"."+s[2]
 
-print("\nSubsampling")
+        if verbose:
+            print(name + ":")
+        model_dir = Path(dirname) / Path(name)
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
+        model_path, texture_path = get_stanford_model(url, name, ext, model_dir, chunk_size, internal_path)
+        all_models.append((model_path, texture_path))
 
-for mf, tf in all_models:
-     print(mf, tf)
-     verts, indices, normals, colors = cv.loadMesh(mf)
+    print("\nSubsampling")
+
+    for mf, tf in all_models:
+        print(mf, tf)
+        verts, indices, normals, colors = cv.loadMesh(mf)
 
