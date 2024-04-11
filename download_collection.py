@@ -379,6 +379,22 @@ if __name__ == "__main__":
 
     stat_data = {}
 
+    stat_file = Path(dirname) / Path("stat.json")
+    if stat_file.exists():
+        with open(stat_file, "r") as openfile:
+            stat_data = json.load(openfile)
+
+        with open(Path(dirname) / Path("stat.csv"), 'w', newline='') as csvfile:
+            fieldnames = [ "model", "normL2Rgb", "normInfRgb", "nzDepthDiff",
+                           "normL2Depth", "normInfDepth"]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for name, sd in stat_data.items():
+                # dict merge operator | is not supported until 3.9
+                sdname = sd
+                sdname["model"] = name
+                writer.writerow(sdname)
+
     for model_name, model_fname, texture_fname in all_models:
         print(model_name)
         verts, list_indices, normals, colors, texCoords = cv.loadMesh(model_fname)
@@ -546,7 +562,7 @@ if __name__ == "__main__":
         }
 
         stat_json = json.dumps(stat_data, indent=4)
-        with open(Path(dirname) / Path("stat.json"), "w") as outfile:
+        with open(stat_file, "w") as outfile:
             outfile.write(stat_json)
 
         print("...next")
