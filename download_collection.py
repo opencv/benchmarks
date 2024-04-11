@@ -4,14 +4,15 @@
 # Dataset page:
 # https://app.gazebosim.org/GoogleResearch/fuel/collections/Scanned%20Objects%20by%20Google%20Research
 
-import sys, json, requests
-import argparse
-import subprocess
+import sys, argparse, subprocess
 from pathlib import Path
+import requests
 import zipfile, tarfile, gzip
-import numpy as np
+import csv, json
 import math
+import numpy as np
 
+# cv2 library should be in PYTHONPATH variable
 import cv2 as cv
 
 if sys.version_info[0] < 3 or sys.version_info[1] < 5:
