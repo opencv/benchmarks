@@ -374,7 +374,9 @@ if __name__ == "__main__":
     fovDegrees = 45.0
     fovY = fovDegrees * math.pi / 180.0
 
-    print("\nSubsampling")
+    print("\ntriangleRasterize() test")
+
+    stat_data = {}
 
     for model_fname, texture_fname in all_models:
         print(model_fname, texture_fname)
@@ -531,4 +533,16 @@ if __name__ == "__main__":
 
         cv.imwrite(Path(model_fname).parent / Path("depth_diff.png"), ((depthDiff) + (1 << 15)).astype(np.ushort))
 
-        cv.imwrite("/home/savuor/logs/loadmesh/depth_diff.png", ((depthDiff) + (1 << 15)).astype(np.ushort))
+        stat_data[str(model_fname)] = {
+            "normL2Rgb"    : str(normL2Rgb),
+            "normInfRgb"   : str(normInfRgb),
+            "nzDepthDiff"  : str(nzDepthDiff),
+            "normL2Depth"  : str(normL2Depth),
+            "normInfDepth" : str(normInfDepth)
+        }
+
+        stat_json = json.dumps(stat_data, indent=4)
+        with open(Path(dirname) / Path("stat.json"), "w") as outfile:
+            outfile.write(stat_json)
+
+        print("...next")
