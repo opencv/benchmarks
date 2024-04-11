@@ -5,8 +5,11 @@
 # https://app.gazebosim.org/GoogleResearch/fuel/collections/Scanned%20Objects%20by%20Google%20Research
 
 import sys, json, requests
+import subprocess
 from pathlib import Path
 import zipfile, tarfile, gzip
+import numpy as np
+import math
 
 import cv2 as cv
 
@@ -258,6 +261,30 @@ def get_stanford_model(url : str, name : str, ext: str, dir : str, chunk_size : 
     return model_path, ""
 
 
+def lookAtMatrixCal(position, lookat, upVector):
+    tmp = position - lookat
+    norm = np.linalg.norm(tmp)
+    w = tmp / norm
+    tmp = np.cross(upVector, w)
+    norm = np.linalg.norm(tmp)
+    u = tmp / norm
+    v = np.cross(w, u)
+    res = np.array([
+        [u[0], u[1], u[2],   0],
+        [v[0], v[1], v[2],   0],
+        [w[0], w[1], w[2],   0],
+        [0,    0,    0,   1.0]
+    ], dtype=np.float32)
+    translate = np.array([
+        [1.0,   0,   0, -position[0]],
+        [0, 1.0,   0, -position[1]],
+        [0,   0, 1.0, -position[2]],
+        [0,   0,   0,          1.0]
+    ], dtype=np.float32)
+    res = np.matmul(res, translate)
+    return res
+
+
 # ==================================================
 if __name__ == "__main__":
     verbose = False
@@ -327,9 +354,159 @@ if __name__ == "__main__":
         model_path, texture_path = get_stanford_model(url, name, ext, model_dir, chunk_size, internal_path)
         all_models.append((model_path, texture_path))
 
+    width, height = 640, 480
+    fovDegrees = 45.0
+    fovY = fovDegrees * math.pi / 180.0
+
     print("\nSubsampling")
 
     for mf, tf in all_models:
         print(mf, tf)
-        verts, indices, normals, colors = cv.loadMesh(mf)
+        verts, list_indices, normals, colors, texCoords = cv.loadMesh(mf)
+        texture = cv.imread(tf) / 255.0
+        verts = verts[0, :, :]
+        print("verts: ", verts.shape)
+        # list_indices is a tuple of 1x3 arrays of dtype=int32
+        indices = np.zeros((len(list_indices), 3), dtype=np.int32)
+        for i, ind in enumerate(list_indices):
+            if ind.shape == (3, 1):
+                ind = ind.t()
+            if ind.shape != (1, 3):
+                raise ValueError()
+            indices[i, :] = ind[:]
+        print("indices: ", indices.shape)
+        normals = normals[0, :, :]
+        print("normals: ", normals.shape)
+        #print("colors: ", colors.shape) # empty now
+        #texCoords = texCoords[0, :, :]
+        print("texCoords: ", texCoords.shape) # empty now
 
+        bbox = np.array([np.min(verts[:, 0]), np.min(verts[:, 1]), np.min(verts[:, 2]),
+                         np.max(verts[:, 0]), np.max(verts[:, 1]), np.max(verts[:, 2])])
+
+        minx, miny, minz = np.min(verts[:, 0]), np.min(verts[:, 1]), np.min(verts[:, 2])
+        maxx, maxy, maxz = np.max(verts[:, 0]), np.max(verts[:, 1]), np.max(verts[:, 2])
+
+        print("bounding box: [%f...%f, %f...%f, %f...%f]" % (minx, maxx, miny, maxy, minz, maxz))
+
+        # this could be used for slow and dirty texturing
+        doRemap = False
+
+        nverts = verts.shape[0]
+        texsz = texture.shape[0:2]
+        texw, texh = texsz[1], texsz[0]
+        minv = np.array([minx, miny, minz])
+        maxv = np.array([maxx, maxy, maxz])
+        diffv = 1.0/(maxv - minv)
+        colors = np.ones((nverts, 3), dtype=np.float32)
+        for i in range(nverts):
+            tc = texCoords[i, :]
+            u, v = int(tc[0] * texw - 0.5), int((1.0-tc[1]) * texh - 0.5)
+            if doRemap:
+                colors[i, :] = [tc[0], 1-tc[1], 0]
+            else:
+                colors[i, :] = texture[v, u, :]
+
+        ctgY = 1./math.tan(fovY / 2.0)
+        ctgX = ctgY / width * height
+        zat = maxz + max([abs(maxy) * ctgY,
+                          abs(miny) * ctgY,
+                          abs(maxx) * ctgX,
+                          abs(minx) * ctgX])
+
+        zNear = zat - maxz
+        zFar = zat - minz
+        position = np.array([0.0, 0.0, zat], dtype=np.float32)
+        lookat   = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        upVector = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        cameraPose = lookAtMatrixCal(position, lookat, upVector)
+
+        depth_buf = np.ones((height, width), dtype=np.float32) * zFar
+        color_buf = np.zeros((height, width, 3), dtype=np.float32)
+
+        settings = cv.TriangleRasterizeSettings().setShadingType(cv.RASTERIZE_SHADING_SHADED)
+        settings = settings.setCullingMode(cv.RASTERIZE_CULLING_NONE)
+
+        color_buf, depth_buf = cv.triangleRasterize(verts, indices, colors, color_buf, depth_buf,
+                                                    cameraPose, fovY, zNear, zFar, settings)
+
+        if doRemap:
+            mapx = color_buf[:, :, 0] * texture.shape[1] - 0.5
+            mapy = color_buf[:, :, 1] * texture.shape[0] - 0.5
+            remapped = cv.remap(texture, mapx, mapy, cv.INTER_LINEAR)
+
+        colorRasterize = color_buf
+        depthRasterize = (depth_buf * 1000.0)
+        cv.imwrite("/home/savuor/logs/loadmesh/color_raster.png", color_buf * 255.0)
+        if doRemap:
+            cv.imwrite("/home/savuor/logs/loadmesh/remap.png", remapped * 255.0)
+        cv.imwrite("/home/savuor/logs/loadmesh/depth_raster.png", depthRasterize.astype(np.ushort))
+
+        # send mesh to OpenGL rasterizer
+
+        vertsToSave = np.expand_dims(verts, axis=0)
+        colorsToSave = np.expand_dims(colors, axis=0)
+        colorsToSave[0, :, ::] = colorsToSave[0, :, ::-1]
+        indicesToSave = []
+        for i in range(indices.shape[0]):
+            ix = indices[i, :]
+            indicesToSave.append(ix)
+        cv.saveMesh("/home/savuor/logs/loadmesh/colvert.ply", vertsToSave, indicesToSave, None, colorsToSave)
+
+        args = ["bin/example_opengl_opengl_testdata_generator"] + [
+                "--modelPath=/home/savuor/logs/loadmesh/colvert.ply",
+                "--custom",
+                "--fov="+str(fovDegrees),
+                "--posx="+str(position[0]),
+                "--posy="+str(position[1]),
+                "--posz="+str(position[2]),
+                "--lookatx="+str(lookat[0]),
+                "--lookaty="+str(lookat[1]),
+                "--lookatz="+str(lookat[2]),
+                "--upx="+str(upVector[0]),
+                "--upy="+str(upVector[1]),
+                "--upz="+str(upVector[2]),
+                "--resx="+str(width),
+                "--resy="+str(height),
+                "--zNear="+str(zNear),
+                "--zFar="+str(zFar),
+                # white/flat/shaded
+                "--shading=shaded",
+                # none/cw/ccw
+                "--culling=cw",
+                "--colorPath=/home/savuor/logs/loadmesh/color.png",
+                "--depthPath=/home/savuor/logs/loadmesh/depth.png",
+            ]
+
+        print(args)
+        p = subprocess.run(args)
+
+        # compare results
+
+        colorGl = cv.imread("/home/savuor/logs/loadmesh/color.png")
+        colorGl = colorGl.astype(np.float32) * (1.0/255.0)
+        colorDiff = np.ravel(colorGl - colorRasterize)
+        normInfRgb = np.linalg.norm(colorDiff, ord=np.inf)
+        normL2Rgb = np.linalg.norm(colorDiff, ord=2) / (width * height)
+        print("rgb L2: %f Inf: %f" % (normL2Rgb, normInfRgb))
+
+        cv.imwrite("/home/savuor/logs/loadmesh/color_diff.png", (colorDiff.reshape((height, width, 3)) + 1) * 0.5 * 255.0)
+
+        depthGl = cv.imread("/home/savuor/logs/loadmesh/depth.png", cv.IMREAD_GRAYSCALE | cv.IMREAD_ANYDEPTH).astype(np.float32)
+        depthDiff = depthGl - depthRasterize
+        threshold = math.floor(zFar * 1000)
+        maskGl = depthGl < threshold
+        maskRaster = depthRasterize < threshold
+        maskDiff = maskGl != maskRaster
+        nzDepthDiff = np.count_nonzero(maskDiff)
+        print("depth nzdiff: %d" % (nzDepthDiff))
+
+        jointMask = maskRaster & maskGl
+        nzJointMask = np.count_nonzero(jointMask)
+        # maskedDiff = np.ma.masked_array(depthDiff, jointMask)
+        maskedDiff = np.ravel(depthDiff[jointMask])
+        normInfDepth = np.linalg.norm(maskedDiff, ord=np.inf)
+        normL2Depth = np.linalg.norm(maskedDiff, ord=2) / nzJointMask
+        print("depth L2: %f Inf: %f" % (normL2Depth, normInfDepth))
+
+        cv.imwrite("/home/savuor/logs/loadmesh/depth_diff.png", ((depthDiff) + (1 << 15)).astype(np.ushort))
