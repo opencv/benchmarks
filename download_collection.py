@@ -342,7 +342,7 @@ if __name__ == "__main__":
         model_dir = Path(dirname) / Path(model.name)
         Path(model_dir).mkdir(parents=True, exist_ok=True)
         model_path, texture_path = download_model(model.name, model_dir)
-        all_models.append((model_path, texture_path))
+        all_models.append((model.name, model_path, texture_path))
 
     print('Done.')
 
@@ -369,18 +369,18 @@ if __name__ == "__main__":
         model_dir = Path(dirname) / Path(name)
         Path(model_dir).mkdir(parents=True, exist_ok=True)
         model_path, texture_path = get_stanford_model(url, name, ext, model_dir, chunk_size, internal_path)
-        all_models.append((model_path, texture_path))
+        all_models.append((name, model_path, texture_path))
+
+    print("\ntriangleRasterize() test")
 
     width, height = 640, 480
     fovDegrees = 45.0
     fovY = fovDegrees * math.pi / 180.0
 
-    print("\ntriangleRasterize() test")
-
     stat_data = {}
 
-    for model_fname, texture_fname in all_models:
-        print(model_fname, texture_fname)
+    for model_name, model_fname, texture_fname in all_models:
+        print(model_name)
         verts, list_indices, normals, colors, texCoords = cv.loadMesh(model_fname)
         if texture_fname:
             texture = cv.imread(texture_fname) / 255.0
@@ -461,6 +461,9 @@ if __name__ == "__main__":
                 cv.imwrite(Path(debug_pics_dir) / Path("remap.png"), remapped * 255.0)
             cv.imwrite(Path(debug_pics_dir) / Path("depth_raster.png"), depthRasterize.astype(np.ushort))
 
+        cv.imwrite(Path(model_fname).parent / Path("color_raster.png"), color_buf * 255.0)
+        cv.imwrite(Path(model_fname).parent / Path("depth_raster.png"), depthRasterize.astype(np.ushort))
+
         # send mesh to OpenGL rasterizer
 
         vertsToSave = np.expand_dims(verts, axis=0)
@@ -534,7 +537,7 @@ if __name__ == "__main__":
 
         cv.imwrite(Path(model_fname).parent / Path("depth_diff.png"), ((depthDiff) + (1 << 15)).astype(np.ushort))
 
-        stat_data[str(model_fname)] = {
+        stat_data[str(model_name)] = {
             "normL2Rgb"    : str(normL2Rgb),
             "normInfRgb"   : str(normInfRgb),
             "nzDepthDiff"  : str(nzDepthDiff),
