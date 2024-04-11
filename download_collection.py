@@ -5,6 +5,7 @@
 # https://app.gazebosim.org/GoogleResearch/fuel/collections/Scanned%20Objects%20by%20Google%20Research
 
 import sys, json, requests
+import argparse
 import subprocess
 from pathlib import Path
 import zipfile, tarfile, gzip
@@ -287,9 +288,24 @@ def lookAtMatrixCal(position, lookat, upVector):
 
 # ==================================================
 if __name__ == "__main__":
-    verbose = False
+    parser = argparse.ArgumentParser(prog="bench3d", description="3D algorithm benchmark for OpenCV")
+    parser.add_argument("--work_dir")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--renderer_path")
+    parser.add_argument("--debug_pics_dir")
 
-    dirname = "dlmodels"
+    args = parser.parse_args()
+
+    if args.verbose:
+        verbose = True
+
+    dirname = args.work_dir
+
+    debug_pics_dir = ""
+    if args.debug_pics_dir:
+        debug_pics_dir = args.debug_pics_dir
+
+    renderer_path = args.renderer_path
 
     all_models = []
 
@@ -360,12 +376,13 @@ if __name__ == "__main__":
 
     print("\nSubsampling")
 
-    for mf, tf in all_models:
-        print(mf, tf)
-        verts, list_indices, normals, colors, texCoords = cv.loadMesh(mf)
-        texture = cv.imread(tf) / 255.0
+    for model_fname, texture_fname in all_models:
+        print(model_fname, texture_fname)
+        verts, list_indices, normals, colors, texCoords = cv.loadMesh(model_fname)
+        if texture_fname:
+            texture = cv.imread(texture_fname) / 255.0
         verts = verts[0, :, :]
-        print("verts: ", verts.shape)
+
         # list_indices is a tuple of 1x3 arrays of dtype=int32
         indices = np.zeros((len(list_indices), 3), dtype=np.int32)
         for i, ind in enumerate(list_indices):
@@ -374,20 +391,17 @@ if __name__ == "__main__":
             if ind.shape != (1, 3):
                 raise ValueError()
             indices[i, :] = ind[:]
-        print("indices: ", indices.shape)
         normals = normals[0, :, :]
-        print("normals: ", normals.shape)
-        #print("colors: ", colors.shape) # empty now
-        #texCoords = texCoords[0, :, :]
-        print("texCoords: ", texCoords.shape) # empty now
-
-        bbox = np.array([np.min(verts[:, 0]), np.min(verts[:, 1]), np.min(verts[:, 2]),
-                         np.max(verts[:, 0]), np.max(verts[:, 1]), np.max(verts[:, 2])])
 
         minx, miny, minz = np.min(verts[:, 0]), np.min(verts[:, 1]), np.min(verts[:, 2])
         maxx, maxy, maxz = np.max(verts[:, 0]), np.max(verts[:, 1]), np.max(verts[:, 2])
 
-        print("bounding box: [%f...%f, %f...%f, %f...%f]" % (minx, maxx, miny, maxy, minz, maxz))
+        if verbose:
+            print("verts: ", verts.shape)
+            print("indices: ", indices.shape)
+            print("normals: ", normals.shape)
+            print("texCoords: ", texCoords.shape) # empty now
+            print("bounding box: [%f...%f, %f...%f, %f...%f]" % (minx, maxx, miny, maxy, minz, maxz))
 
         # this could be used for slow and dirty texturing
         doRemap = False
@@ -437,10 +451,12 @@ if __name__ == "__main__":
 
         colorRasterize = color_buf
         depthRasterize = (depth_buf * 1000.0)
-        cv.imwrite("/home/savuor/logs/loadmesh/color_raster.png", color_buf * 255.0)
-        if doRemap:
-            cv.imwrite("/home/savuor/logs/loadmesh/remap.png", remapped * 255.0)
-        cv.imwrite("/home/savuor/logs/loadmesh/depth_raster.png", depthRasterize.astype(np.ushort))
+
+        if debug_pics_dir:
+            cv.imwrite(Path(debug_pics_dir) / Path("color_raster.png"), color_buf * 255.0)
+            if doRemap:
+                cv.imwrite(Path(debug_pics_dir) / Path("remap.png"), remapped * 255.0)
+            cv.imwrite(Path(debug_pics_dir) / Path("depth_raster.png"), depthRasterize.astype(np.ushort))
 
         # send mesh to OpenGL rasterizer
 
@@ -451,10 +467,13 @@ if __name__ == "__main__":
         for i in range(indices.shape[0]):
             ix = indices[i, :]
             indicesToSave.append(ix)
-        cv.saveMesh("/home/savuor/logs/loadmesh/colvert.ply", vertsToSave, indicesToSave, None, colorsToSave)
+        colvert_path = Path(model_fname).parent / Path("colvert.ply")
+        cv.saveMesh(colvert_path, vertsToSave, indicesToSave, None, colorsToSave)
 
-        args = ["bin/example_opengl_opengl_testdata_generator"] + [
-                "--modelPath=/home/savuor/logs/loadmesh/colvert.ply",
+        rgb_gl_path   = Path(model_fname).parent / Path("color.png")
+        depth_gl_path = Path(model_fname).parent / Path("depth.png")
+        renderer_args = [renderer_path] + [
+                "--modelPath="+str(colvert_path),
                 "--custom",
                 "--fov="+str(fovDegrees),
                 "--posx="+str(position[0]),
@@ -474,25 +493,26 @@ if __name__ == "__main__":
                 "--shading=shaded",
                 # none/cw/ccw
                 "--culling=cw",
-                "--colorPath=/home/savuor/logs/loadmesh/color.png",
-                "--depthPath=/home/savuor/logs/loadmesh/depth.png",
+                "--colorPath="+str(rgb_gl_path),
+                "--depthPath="+str(depth_gl_path),
             ]
 
-        print(args)
-        p = subprocess.run(args)
+        if verbose:
+            print(renderer_args)
+        p = subprocess.run(renderer_args)
 
         # compare results
 
-        colorGl = cv.imread("/home/savuor/logs/loadmesh/color.png")
+        colorGl = cv.imread(rgb_gl_path)
         colorGl = colorGl.astype(np.float32) * (1.0/255.0)
         colorDiff = np.ravel(colorGl - colorRasterize)
         normInfRgb = np.linalg.norm(colorDiff, ord=np.inf)
         normL2Rgb = np.linalg.norm(colorDiff, ord=2) / (width * height)
         print("rgb L2: %f Inf: %f" % (normL2Rgb, normInfRgb))
 
-        cv.imwrite("/home/savuor/logs/loadmesh/color_diff.png", (colorDiff.reshape((height, width, 3)) + 1) * 0.5 * 255.0)
+        cv.imwrite(Path(model_fname).parent / Path("color_diff.png"), (colorDiff.reshape((height, width, 3)) + 1) * 0.5 * 255.0)
 
-        depthGl = cv.imread("/home/savuor/logs/loadmesh/depth.png", cv.IMREAD_GRAYSCALE | cv.IMREAD_ANYDEPTH).astype(np.float32)
+        depthGl = cv.imread(depth_gl_path, cv.IMREAD_GRAYSCALE | cv.IMREAD_ANYDEPTH).astype(np.float32)
         depthDiff = depthGl - depthRasterize
         threshold = math.floor(zFar * 1000)
         maskGl = depthGl < threshold
@@ -508,5 +528,7 @@ if __name__ == "__main__":
         normInfDepth = np.linalg.norm(maskedDiff, ord=np.inf)
         normL2Depth = np.linalg.norm(maskedDiff, ord=2) / nzJointMask
         print("depth L2: %f Inf: %f" % (normL2Depth, normInfDepth))
+
+        cv.imwrite(Path(model_fname).parent / Path("depth_diff.png"), ((depthDiff) + (1 << 15)).astype(np.ushort))
 
         cv.imwrite("/home/savuor/logs/loadmesh/depth_diff.png", ((depthDiff) + (1 << 15)).astype(np.ushort))
