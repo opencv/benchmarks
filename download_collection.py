@@ -461,12 +461,41 @@ if __name__ == "__main__":
         #    continue
 
         print(model_name)
+
+        colvert_path = Path(model_fname).parent / Path("colvert.ply")
+        
+        remap_path = Path(debug_pics_dir) / Path("remap.png")
+        debug_color_path = Path(debug_pics_dir) / Path("color_raster.png")
+        debug_depth_path = Path(debug_pics_dir) / Path("depth_raster.png")
+
+        color_raster_path = Path(model_fname).parent / Path("color_raster.png")
+        depth_raster_path = Path(model_fname).parent / Path("depth_raster.png")
+
+        rgb_gl_path   = Path(model_fname).parent / Path("color_gl.png")
+        depth_gl_path = Path(model_fname).parent / Path("depth_gl.png")
+
+        color_diff_path = Path(model_fname).parent / Path("color_diff.png")
+
+        depth_diff_path  = Path(model_fname).parent / Path("depth_diff.png")
+        mask_gl_path     = Path(model_fname).parent / Path("mask_gl.png")
+        mask_raster_path = Path(model_fname).parent / Path("mask_raster.png")
+
+        for file in [ colvert_path, remap_path,
+                      color_raster_path, depth_raster_path,
+                      rgb_gl_path, depth_gl_path,
+                      color_diff_path, depth_diff_path, mask_gl_path, mask_raster_path ]:
+            file.unlink(missing_ok=True)
+
+        if verbose:
+            print("temp files removed")
+
         verts, list_indices, normals, colors, texCoords = cv.loadMesh(model_fname)
         if verbose:
             print("loading finished")
 
         if texture_fname:
             texture = cv.imread(texture_fname) / 255.0
+
         verts = verts.squeeze()
 
         # list_indices is a tuple of 1x3 arrays of dtype=int32
@@ -528,6 +557,23 @@ if __name__ == "__main__":
                                                    np.sin(t / (nverts * 2))]).astype(np.float32).T
                     print("colors generated")
 
+        # save mesh for OpenGL renderer
+
+        vertsToSave = np.expand_dims(verts, axis=0)
+        colorsToSave = np.expand_dims(colors, axis=0)
+        colorsToSave = colorsToSave[:, :, ::-1]
+        indicesToSave = []
+        for i in range(indices.shape[0]):
+            ix = indices[i, :]
+            indicesToSave.append(ix)
+
+        cv.saveMesh(colvert_path, vertsToSave, indicesToSave, None, colorsToSave)
+
+        if verbose:
+            print("mesh saved for OpenGL renderer")
+
+        # rasterize
+
         ctgY = 1./math.tan(fovY / 2.0)
         ctgX = ctgY / width * height
         zat = maxz + max([abs(maxy) * ctgY,
@@ -561,35 +607,20 @@ if __name__ == "__main__":
             mapx = remap_color_buf[:, :, 0] * texture.shape[1] - 0.5
             mapy = remap_color_buf[:, :, 1] * texture.shape[0] - 0.5
             remapped = cv.remap(texture, mapx, mapy, cv.INTER_LINEAR)
-            cv.imwrite(Path(debug_pics_dir) / Path("remap.png"), remapped * 255.0)
+            cv.imwrite(remap_path, remapped * 255.0)
 
         colorRasterize = color_buf
         depthRasterize = (depth_buf * scaleCoeff)
 
         if debug_pics_dir:
-            cv.imwrite(Path(debug_pics_dir) / Path("color_raster.png"), color_buf * 255.0)
-            cv.imwrite(Path(debug_pics_dir) / Path("depth_raster.png"), depthRasterize.astype(np.ushort))
+            cv.imwrite(debug_color_path, color_buf * 255.0)
+            cv.imwrite(debug_depth_path, depthRasterize.astype(np.ushort))
 
-        cv.imwrite(Path(model_fname).parent / Path("color_raster.png"), color_buf * 255.0)
-        cv.imwrite(Path(model_fname).parent / Path("depth_raster.png"), depthRasterize.astype(np.ushort))
+        cv.imwrite(color_raster_path, color_buf * 255.0)
+        cv.imwrite(depth_raster_path, depthRasterize.astype(np.ushort))
 
         # send mesh to OpenGL rasterizer
 
-        vertsToSave = np.expand_dims(verts, axis=0)
-        colorsToSave = np.expand_dims(colors, axis=0)
-        colorsToSave[0, :, ::] = colorsToSave[0, :, ::-1]
-        indicesToSave = []
-        for i in range(indices.shape[0]):
-            ix = indices[i, :]
-            indicesToSave.append(ix)
-        colvert_path = Path(model_fname).parent / Path("colvert.ply")
-        cv.saveMesh(colvert_path, vertsToSave, indicesToSave, None, colorsToSave)
-
-        if verbose:
-            print("mesh saved for OpenGL renderer")
-
-        rgb_gl_path   = Path(model_fname).parent / Path("color_gl.png")
-        depth_gl_path = Path(model_fname).parent / Path("depth_gl.png")
         renderer_args = [renderer_path] + [
                 "--modelPath="+str(colvert_path),
                 "--custom",
@@ -629,7 +660,7 @@ if __name__ == "__main__":
         normL2Rgb = np.linalg.norm(colorDiff, ord=2) / (width * height)
         print("rgb L2: %f Inf: %f" % (normL2Rgb, normInfRgb))
 
-        cv.imwrite(Path(model_fname).parent / Path("color_diff.png"), (colorDiff.reshape((height, width, 3)) + 1) * 0.5 * 255.0)
+        cv.imwrite(color_diff_path, (colorDiff.reshape((height, width, 3)) + 1) * 0.5 * 255.0)
 
         depthGl = cv.imread(depth_gl_path, cv.IMREAD_GRAYSCALE | cv.IMREAD_ANYDEPTH).astype(np.float32)
         depthGl /= scaleCoeff
@@ -653,9 +684,9 @@ if __name__ == "__main__":
             normL2Depth = math.nan
         print("depth L2: %f Inf: %f" % (normL2Depth, normInfDepth))
 
-        cv.imwrite(Path(model_fname).parent / Path("depth_diff.png"), ((depthDiff) + (1 << 15)).astype(np.ushort))
-        cv.imwrite(Path(model_fname).parent / Path("mask_gl.png"), maskGl.astype(np.ubyte) * 255)
-        cv.imwrite(Path(model_fname).parent / Path("mask_raster.png"), maskRaster.astype(np.ubyte) * 255)
+        cv.imwrite(depth_diff_path, ((depthDiff) + (1 << 15)).astype(np.ushort))
+        cv.imwrite(mask_gl_path, maskGl.astype(np.ubyte) * 255)
+        cv.imwrite(mask_raster_path, maskRaster.astype(np.ubyte) * 255)
 
         stat_data[str(model_name)] = {
             "normL2Rgb"    : str(normL2Rgb),
