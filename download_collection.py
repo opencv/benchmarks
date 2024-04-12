@@ -581,8 +581,8 @@ if __name__ == "__main__":
         if verbose:
             print("mesh saved for OpenGL renderer")
 
-        rgb_gl_path   = Path(model_fname).parent / Path("color.png")
-        depth_gl_path = Path(model_fname).parent / Path("depth.png")
+        rgb_gl_path   = Path(model_fname).parent / Path("color_gl.png")
+        depth_gl_path = Path(model_fname).parent / Path("depth_gl.png")
         renderer_args = [renderer_path] + [
                 "--modelPath="+str(colvert_path),
                 "--custom",
@@ -625,19 +625,20 @@ if __name__ == "__main__":
         cv.imwrite(Path(model_fname).parent / Path("color_diff.png"), (colorDiff.reshape((height, width, 3)) + 1) * 0.5 * 255.0)
 
         depthGl = cv.imread(depth_gl_path, cv.IMREAD_GRAYSCALE | cv.IMREAD_ANYDEPTH).astype(np.float32)
+        depthGl /= scaleCoeff
+        depthRasterize /= scaleCoeff
         depthDiff = depthGl - depthRasterize
-        threshold = math.floor(zFar * scaleCoeff)
-        maskGl = depthGl < threshold
-        maskRaster = depthRasterize < threshold
+
+        maskGl = abs(depthGl - zFar) < 1e-5
+        maskRaster = abs(depthRasterize - zFar) < 1e-5
         maskDiff = maskGl != maskRaster
         nzDepthDiff = np.count_nonzero(maskDiff)
         print("depth nzdiff: %d" % (nzDepthDiff))
 
         jointMask = maskRaster & maskGl
         nzJointMask = np.count_nonzero(jointMask)
-        # maskedDiff = np.ma.masked_array(depthDiff, jointMask)
-        maskedDiff = np.ravel(depthDiff[jointMask])
         if nzJointMask:
+            maskedDiff = np.ravel(depthDiff[jointMask])
             normInfDepth = np.linalg.norm(maskedDiff, ord=np.inf)
             normL2Depth = np.linalg.norm(maskedDiff, ord=2) / nzJointMask
         else:
@@ -646,6 +647,8 @@ if __name__ == "__main__":
         print("depth L2: %f Inf: %f" % (normL2Depth, normInfDepth))
 
         cv.imwrite(Path(model_fname).parent / Path("depth_diff.png"), ((depthDiff) + (1 << 15)).astype(np.ushort))
+        cv.imwrite(Path(model_fname).parent / Path("mask_gl.png"), maskGl.astype(np.ubyte) * 255)
+        cv.imwrite(Path(model_fname).parent / Path("mask_raster.png"), maskRaster.astype(np.ubyte) * 255)
 
         stat_data[str(model_name)] = {
             "normL2Rgb"    : str(normL2Rgb),
@@ -659,19 +662,14 @@ if __name__ == "__main__":
         with open(stat_file, "w") as outfile:
             outfile.write(stat_json)
 
-#TODO: no code duplication
-stat_file = Path(dirname) / Path("stat.json")
-if stat_file.exists():
-    with open(stat_file, "r") as openfile:
-        stat_data = json.load(openfile)
-
-    with open(Path(dirname) / Path("stat.csv"), 'w', newline='') as csvfile:
-        fieldnames = [ "model", "normL2Rgb", "normInfRgb", "nzDepthDiff",
-                       "normL2Depth", "normInfDepth"]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        for name, sd in stat_data.items():
-            # dict merge operator | is not supported until 3.9
-            sdname = sd
-            sdname["model"] = name
-            writer.writerow(sdname)
+        #TODO: no code duplication
+        with open(Path(dirname) / Path("stat.csv"), 'w', newline='') as csvfile:
+            fieldnames = [ "model", "normL2Rgb", "normInfRgb", "nzDepthDiff",
+                           "normL2Depth", "normInfDepth"]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for name, sd in stat_data.items():
+                # dict merge operator | is not supported until 3.9
+                sdname = sd
+                sdname["model"] = name
+                writer.writerow(sdname)
