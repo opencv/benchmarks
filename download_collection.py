@@ -552,10 +552,11 @@ if __name__ == "__main__":
                     colors = abs(normals)
                 else:
                     t = np.arange(0, nverts, dtype=np.float32)
-                    colors = 0.5 + 0.5* np.vstack([np.cos(t / (nverts)),
-                                                   np.sin(t / (nverts)),
-                                                   np.sin(t / (nverts * 2))]).astype(np.float32).T
-                    print("colors generated")
+                    colors = 0.5 + 0.5 * np.vstack([np.cos(t * (2 * math.pi / nverts)),
+                                                    np.sin(t * (3 * math.pi / nverts)),
+                                                    np.sin(t * (2 * math.pi / nverts))]).astype(np.float32).T
+                    if verbose:
+                        print("colors generated")
 
         # save mesh for OpenGL renderer
 
