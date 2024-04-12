@@ -668,8 +668,8 @@ if __name__ == "__main__":
         depthRasterize /= scaleCoeff
         depthDiff = depthGl - depthRasterize
 
-        maskGl = abs(depthGl - zFar) < 1e-5
-        maskRaster = abs(depthRasterize - zFar) < 1e-5
+        maskGl = abs(depthGl - zFar) > 1e-6
+        maskRaster = abs(depthRasterize - zFar) > 1e-6
         maskDiff = maskGl != maskRaster
         nzDepthDiff = np.count_nonzero(maskDiff)
         print("depth nzdiff: %d" % (nzDepthDiff))
