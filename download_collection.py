@@ -339,6 +339,18 @@ def generateNormals(points, indices):
         raise RuntimeError("too much triangle per vertex")
 
 
+def writeCsv(path, stat_data):
+    with open(path, 'w', newline='') as csvfile:
+        fieldnames = [ "model", "normL2Rgb", "normInfRgb", "nzDepthDiff",
+                    "normL2Depth", "normInfDepth"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for name, sd in stat_data.items():
+            # dict merge operator | is not supported until 3.9
+            sdname = sd
+            sdname["model"] = name
+            writer.writerow(sdname)
+
 # ==================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="bench3d", description="3D algorithm benchmark for OpenCV")
@@ -433,20 +445,15 @@ if __name__ == "__main__":
     stat_data = {}
 
     stat_file = Path(dirname) / Path("stat.json")
+    csv_file  = Path(dirname) / Path("stat.csv")
+
+    for file in [stat_file, csv_file]:
+        file.unlink(missing_ok=True)
+
     if stat_file.exists():
         with open(stat_file, "r") as openfile:
             stat_data = json.load(openfile)
-
-        with open(Path(dirname) / Path("stat.csv"), 'w', newline='') as csvfile:
-            fieldnames = [ "model", "normL2Rgb", "normInfRgb", "nzDepthDiff",
-                           "normL2Depth", "normInfDepth"]
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            for name, sd in stat_data.items():
-                # dict merge operator | is not supported until 3.9
-                sdname = sd
-                sdname["model"] = name
-                writer.writerow(sdname)
+        writeCsv(csv_file, stat_data)
 
     for model_name, model_fname, texture_fname in all_models:
         #DEBUG
@@ -661,15 +668,4 @@ if __name__ == "__main__":
         stat_json = json.dumps(stat_data, indent=4)
         with open(stat_file, "w") as outfile:
             outfile.write(stat_json)
-
-        #TODO: no code duplication
-        with open(Path(dirname) / Path("stat.csv"), 'w', newline='') as csvfile:
-            fieldnames = [ "model", "normL2Rgb", "normInfRgb", "nzDepthDiff",
-                           "normL2Depth", "normInfDepth"]
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            for name, sd in stat_data.items():
-                # dict merge operator | is not supported until 3.9
-                sdname = sd
-                sdname["model"] = name
-                writer.writerow(sdname)
+        writeCsv(csv_file, stat_data)
