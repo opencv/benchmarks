@@ -287,11 +287,64 @@ def lookAtMatrixCal(position, lookat, upVector):
     return res
 
 
+# walk over all triangles, collect per-vertex normals
+def generateNormals(points, indices):
+    success = False
+    maxTri = 8
+    while not success and maxTri < 64:
+        preNormals = np.zeros((points.shape[0], maxTri, 3), dtype=np.float32)
+        nNormals = np.zeros((points.shape[0],), dtype=np.int)
+
+        pArr = [ np.take(points, indices[:, j], axis=0) for j in range(3) ]
+
+        crossArr = np.cross(pArr[1] - pArr[0], pArr[2] - pArr[0])
+        # normalizing, fixing div by zero
+        crossNorm = np.linalg.norm(crossArr, axis=1)
+        crossNorm[abs(crossNorm) < 1e-6 ] = 1
+        crossNorm3 = np.vstack([crossNorm, crossNorm, crossNorm]).T
+        crossArr = crossArr * (1.0 / crossNorm3)
+
+        needMoreTri = False
+        for i in range(crossArr.shape[0]):
+            tri = indices[i, :]
+            cross = crossArr[i, :]
+
+            for j in range(3):
+                idx = tri[j]
+                n = nNormals[idx]
+                if n == maxTri:
+                    print(maxTri, " triangles per vertex is not enough, adding 8 more")
+                    needMoreTri = True
+                    break
+                nNormals[idx] = n+1
+                preNormals[idx, n, :] = cross
+            if needMoreTri:
+                break
+
+        if needMoreTri:
+            maxTri += 8
+        else:
+            normals = np.sum(preNormals, axis=1)
+            # normalizing, fixing div by zero
+            norm = np.linalg.norm(normals, axis=1)
+            norm[abs(norm) < 1e-6 ] = 1
+            norm3 = np.vstack([norm, norm, norm]).T
+            normals = normals * (1.0 / norm3)
+            success = True
+
+    if success:
+        print ("normals generated")
+        return normals
+    else:
+        raise RuntimeError("too much triangle per vertex")
+
+
 # ==================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="bench3d", description="3D algorithm benchmark for OpenCV")
     parser.add_argument("--work_dir")
     parser.add_argument("--verbose", action="store_true")
+    # see file example_opengl_opengl_testdata_generator
     parser.add_argument("--renderer_path")
     parser.add_argument("--debug_pics_dir")
 
@@ -396,21 +449,36 @@ if __name__ == "__main__":
                 writer.writerow(sdname)
 
     for model_name, model_fname, texture_fname in all_models:
+        #DEBUG
+        #if "stanford_lucy" in model_name:
+        #    continue
+
         print(model_name)
         verts, list_indices, normals, colors, texCoords = cv.loadMesh(model_fname)
+        if verbose:
+            print("loading finished")
+
         if texture_fname:
             texture = cv.imread(texture_fname) / 255.0
-        verts = verts[0, :, :]
+        verts = verts.squeeze()
 
         # list_indices is a tuple of 1x3 arrays of dtype=int32
-        indices = np.zeros((len(list_indices), 3), dtype=np.int32)
-        for i, ind in enumerate(list_indices):
-            if ind.shape == (3, 1):
-                ind = ind.t()
+        if not list_indices:
+            raise ValueError("empty index list")
+        for ind in list_indices:
             if ind.shape != (1, 3):
-                raise ValueError()
-            indices[i, :] = ind[:]
-        normals = normals[0, :, :]
+                raise ValueError("wrong index shape")
+
+        indices = np.array(list_indices, dtype=np.int32).squeeze()
+
+        if len(indices.shape) != 2 or (indices.shape[1] != 3):
+            raise ValueError("wrong index shape")
+
+        if normals is not None:
+            normals = normals.squeeze()
+
+        if colors is not None:
+            colors = colors.squeeze()
 
         minx, miny, minz = np.min(verts[:, 0]), np.min(verts[:, 1]), np.min(verts[:, 2])
         maxx, maxy, maxz = np.max(verts[:, 0]), np.max(verts[:, 1]), np.max(verts[:, 2])
@@ -418,27 +486,40 @@ if __name__ == "__main__":
         if verbose:
             print("verts: ", verts.shape)
             print("indices: ", indices.shape)
-            print("normals: ", normals.shape)
-            print("texCoords: ", texCoords.shape) # empty now
+            print("normals: ", (normals.shape if normals is not None else 0))
+            print("colors: ", (colors.shape if colors is not None else 0))
+            print("texCoords: ", (texCoords.shape if texCoords is not None else 0))
             print("bounding box: [%f...%f, %f...%f, %f...%f]" % (minx, maxx, miny, maxy, minz, maxz))
+
+        nverts = verts.shape[0]
 
         # this could be used for slow and dirty texturing
         doRemap = False
+        remapCoords = np.ones((nverts, 3), dtype=np.float32)
 
-        nverts = verts.shape[0]
-        texsz = texture.shape[0:2]
-        texw, texh = texsz[1], texsz[0]
-        minv = np.array([minx, miny, minz])
-        maxv = np.array([maxx, maxy, maxz])
-        diffv = 1.0/(maxv - minv)
-        colors = np.ones((nverts, 3), dtype=np.float32)
-        for i in range(nverts):
-            tc = texCoords[i, :]
-            u, v = int(tc[0] * texw - 0.5), int((1.0-tc[1]) * texh - 0.5)
-            if doRemap:
-                colors[i, :] = [tc[0], 1-tc[1], 0]
+        if colors is None:
+            if texCoords is not None:
+                # sample vertex color from texture
+                if doRemap:
+                    colors = np.ones((nverts, 3), dtype=np.float32)
+                    for i in range(nverts):
+                        remapCoords[i, :] = [texCoords[i, 0], 1.0-texCoords[i, 1], 0]
+
+                uArr = (       texCoords[:, 0]  * texture.shape[1] - 0.5).astype(np.int)
+                vArr = ((1.0 - texCoords[:, 1]) * texture.shape[0] - 0.5).astype(np.int)
+                colors = (texture[vArr, uArr, :]).astype(np.float32)
+
             else:
-                colors[i, :] = texture[v, u, :]
+                if nverts < 1_000_000:
+                    # generate normals and set colors to normals
+                    normals = generateNormals(verts, indices)
+                    colors = abs(normals)
+                else:
+                    t = np.arange(0, nverts, dtype=np.float32)
+                    colors = 0.5 + 0.5* np.vstack([np.cos(t / (nverts)),
+                                                   np.sin(t / (nverts)),
+                                                   np.sin(t / (nverts * 2))]).astype(np.float32).T
+                    print("colors generated")
 
         ctgY = 1./math.tan(fovY / 2.0)
         ctgX = ctgY / width * height
@@ -453,6 +534,7 @@ if __name__ == "__main__":
         lookat   = np.array([0.0, 0.0, 0.0], dtype=np.float32)
         upVector = np.array([0.0, 1.0, 0.0], dtype=np.float32)
         cameraPose = lookAtMatrixCal(position, lookat, upVector)
+        scaleCoeff = 65535.0 / zFar
 
         depth_buf = np.ones((height, width), dtype=np.float32) * zFar
         color_buf = np.zeros((height, width, 3), dtype=np.float32)
@@ -463,18 +545,22 @@ if __name__ == "__main__":
         color_buf, depth_buf = cv.triangleRasterize(verts, indices, colors, color_buf, depth_buf,
                                                     cameraPose, fovY, zNear, zFar, settings)
 
+        if verbose:
+            print("rasterized")
+
         if doRemap:
-            mapx = color_buf[:, :, 0] * texture.shape[1] - 0.5
-            mapy = color_buf[:, :, 1] * texture.shape[0] - 0.5
+            remap_color_buf, _ = cv.triangleRasterizeColor(verts, indices, remapCoords, color_buf, depth_buf,
+                                                           cameraPose, fovY, zNear, zFar, settings)
+            mapx = remap_color_buf[:, :, 0] * texture.shape[1] - 0.5
+            mapy = remap_color_buf[:, :, 1] * texture.shape[0] - 0.5
             remapped = cv.remap(texture, mapx, mapy, cv.INTER_LINEAR)
+            cv.imwrite(Path(debug_pics_dir) / Path("remap.png"), remapped * 255.0)
 
         colorRasterize = color_buf
-        depthRasterize = (depth_buf * 1000.0)
+        depthRasterize = (depth_buf * scaleCoeff)
 
         if debug_pics_dir:
             cv.imwrite(Path(debug_pics_dir) / Path("color_raster.png"), color_buf * 255.0)
-            if doRemap:
-                cv.imwrite(Path(debug_pics_dir) / Path("remap.png"), remapped * 255.0)
             cv.imwrite(Path(debug_pics_dir) / Path("depth_raster.png"), depthRasterize.astype(np.ushort))
 
         cv.imwrite(Path(model_fname).parent / Path("color_raster.png"), color_buf * 255.0)
@@ -491,6 +577,9 @@ if __name__ == "__main__":
             indicesToSave.append(ix)
         colvert_path = Path(model_fname).parent / Path("colvert.ply")
         cv.saveMesh(colvert_path, vertsToSave, indicesToSave, None, colorsToSave)
+
+        if verbose:
+            print("mesh saved for OpenGL renderer")
 
         rgb_gl_path   = Path(model_fname).parent / Path("color.png")
         depth_gl_path = Path(model_fname).parent / Path("depth.png")
@@ -511,6 +600,7 @@ if __name__ == "__main__":
                 "--resy="+str(height),
                 "--zNear="+str(zNear),
                 "--zFar="+str(zFar),
+                "--scaleCoeff="+str(scaleCoeff),
                 # white/flat/shaded
                 "--shading=shaded",
                 # none/cw/ccw
@@ -536,7 +626,7 @@ if __name__ == "__main__":
 
         depthGl = cv.imread(depth_gl_path, cv.IMREAD_GRAYSCALE | cv.IMREAD_ANYDEPTH).astype(np.float32)
         depthDiff = depthGl - depthRasterize
-        threshold = math.floor(zFar * 1000)
+        threshold = math.floor(zFar * scaleCoeff)
         maskGl = depthGl < threshold
         maskRaster = depthRasterize < threshold
         maskDiff = maskGl != maskRaster
@@ -547,8 +637,12 @@ if __name__ == "__main__":
         nzJointMask = np.count_nonzero(jointMask)
         # maskedDiff = np.ma.masked_array(depthDiff, jointMask)
         maskedDiff = np.ravel(depthDiff[jointMask])
-        normInfDepth = np.linalg.norm(maskedDiff, ord=np.inf)
-        normL2Depth = np.linalg.norm(maskedDiff, ord=2) / nzJointMask
+        if nzJointMask:
+            normInfDepth = np.linalg.norm(maskedDiff, ord=np.inf)
+            normL2Depth = np.linalg.norm(maskedDiff, ord=2) / nzJointMask
+        else:
+            normInfDepth = math.nan
+            normL2Depth = math.nan
         print("depth L2: %f Inf: %f" % (normL2Depth, normInfDepth))
 
         cv.imwrite(Path(model_fname).parent / Path("depth_diff.png"), ((depthDiff) + (1 << 15)).astype(np.ushort))
@@ -565,4 +659,19 @@ if __name__ == "__main__":
         with open(stat_file, "w") as outfile:
             outfile.write(stat_json)
 
-        print("...next")
+#TODO: no code duplication
+stat_file = Path(dirname) / Path("stat.json")
+if stat_file.exists():
+    with open(stat_file, "r") as openfile:
+        stat_data = json.load(openfile)
+
+    with open(Path(dirname) / Path("stat.csv"), 'w', newline='') as csvfile:
+        fieldnames = [ "model", "normL2Rgb", "normInfRgb", "nzDepthDiff",
+                       "normL2Depth", "normInfDepth"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for name, sd in stat_data.items():
+            # dict merge operator | is not supported until 3.9
+            sdname = sd
+            sdname["model"] = name
+            writer.writerow(sdname)
