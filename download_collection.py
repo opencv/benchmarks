@@ -12,8 +12,11 @@ import csv, json
 import math
 import numpy as np
 
-# cv2 library should be in PYTHONPATH variable
-import cv2 as cv
+try:
+    import cv2 as cv
+except ImportError:
+    raise ImportError("Failed to import OpenCV, please check that cv2 library is in PYTHONPATH env variable, "
+                      "for example use the path {opencv_build_dir}/lib/python3/")
 
 if sys.version_info[0] < 3 or sys.version_info[1] < 5:
     raise Exception("Python 3.5 or greater is required. Try running `python3 download_collection.py`")
