@@ -355,13 +355,33 @@ def writeCsv(path, stat_data):
             writer.writerow(sdname)
 
 # ==================================================
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog="bench3d", description="3D algorithm benchmark for OpenCV")
-    parser.add_argument("--work_dir")
-    parser.add_argument("--verbose", action="store_true")
-    # see file example_opengl_opengl_testdata_generator
-    parser.add_argument("--renderer_path")
-    parser.add_argument("--debug_pics_dir")
+    parser = argparse.ArgumentParser(prog="bench3d", description="3D algorithm benchmark for OpenCV",
+                                     formatter_class=argparse.RawTextHelpFormatter,
+                                     epilog="The tool works with the latest OpenCV 5.x, "
+                                     "a proper path to OpenCV library should be provided in PYTHONPATH env. variable, "
+                                     "usually it is {opencv_build_dir}/lib/python3/\n"
+                                     "The script first downloads dataset contents to {work_dir}/contents.json "
+                                     "then downloads and unpacks the models and their thumbnails. "
+                                     "If this process is interrupted, you can start the script again and "
+                                     "it will continue from the same point.\n"
+                                     "Next, the benchmark for triangleRasterize() starts: each model is "
+                                     "rendered by both OpenCV and OpenGL reference tool, results are compared.\n"
+                                     "The statistics is saved to {work_dir}/stat.json and {work_dir}/stat.csv "
+                                     "after each model processed.\n"
+                                     "NOTE: statistics is erased at each script start\n"
+                                     "NOTE #2: stanford_* models are quite big, may require several minutes "
+                                     "and up to 12 Gb RAM per each")
+    parser.add_argument("--work_dir", required=True, help="a directory to store downloaded dataset and generated files")
+    parser.add_argument("--verbose", action="store_true",
+                        help="indicates whether to display more information to the console or not")
+    parser.add_argument("--renderer_path", required=True,
+                        help="path to OpenGL tool to render models, usually it is "
+                        "{opencv_build_dir}/bin/example_opengl_opengl_testdata_generator")
+    parser.add_argument("--debug_pics_dir",
+                        help="optional, a directory to store temporary images "
+                        "showing in realtime what is being rendered right now")
 
     args = parser.parse_args()
 
