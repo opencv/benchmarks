@@ -479,10 +479,6 @@ if __name__ == "__main__":
         writeCsv(csv_file, stat_data)
 
     for model_name, model_fname, texture_fname in all_models:
-        #DEBUG
-        #if "stanford_lucy" in model_name:
-        #    continue
-
         print(model_name)
 
         colvert_path = Path(model_fname).parent / Path("colvert.ply")
